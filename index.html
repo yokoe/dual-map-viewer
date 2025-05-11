@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>2地点地図ビューア</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+     integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+     crossorigin=""/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+     integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+     crossorigin=""></script>
+    <style>
+        /* Leafletの地図コンテナの基本的な高さ */
+        .map-container {
+            height: calc(100vh - 8rem); /* ヘッダーと住所表示エリアの高さを考慮 */
+            border-radius: 0.5rem; /* Tailwindのrounded-lg相当 */
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1); /* Tailwindのshadow-md相当 */
+        }
+        /* モバイル表示では地図を縦に並べる */
+        @media (max-width: 768px) {
+            .map-container {
+                height: 45vh; /* モバイルでは各マップの高さを調整 */
+                margin-bottom: 0.5rem; /* 住所表示との間隔 */
+            }
+        }
+        /* フォント設定 */
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        /* Tailwind CSSがデフォルトで読み込むフォントをInterにするための設定 */
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+        .address-display {
+            min-height: 1.5em; /* 住所が表示されていない場合でも高さを確保 */
+        }
+    </style>
+</head>
+<body class="bg-gray-100">
+    <header class="bg-blue-600 text-white p-4 shadow-md">
+        <h1 class="text-2xl font-bold text-center">2地点地図ビューア</h1>
+    </header>
+
+    <div class="container mx-auto p-4">
+        <div class="flex flex-col md:flex-row md:space-x-4">
+            <div class="w-full md:w-1/2 mb-4 md:mb-0">
+                <h2 id="map1-title" class="text-xl font-semibold mb-1 text-center text-gray-700">地点1</h2>
+                <p id="address1-display" class="text-sm text-gray-600 mb-2 text-center address-display">住所情報なし</p>
+                <div id="map1" class="map-container"></div>
+            </div>
+            <div class="w-full md:w-1/2">
+                <h2 id="map2-title" class="text-xl font-semibold mb-1 text-center text-gray-700">地点2</h2>
+                <p id="address2-display" class="text-sm text-gray-600 mb-2 text-center address-display">住所情報なし</p>
+                <div id="map2" class="map-container"></div>
+            </div>
+        </div>
+
+        <div class="mt-8 p-4 bg-white rounded-lg shadow-md">
+            <h3 class="text-lg font-semibold mb-2 text-gray-800">使い方</h3>
+            <p class="text-gray-600">
+                URLの末尾に以下のようにパラメータを追加して、表示する場所と住所を指定できます。
+            </p>
+            <code class="block bg-gray-200 p-2 rounded mt-2 text-sm overflow-x-auto whitespace-pre-wrap">
+?latlng1=(緯度1,経度1)&address1=住所文字列1&latlng2=(緯度2,経度2)&address2=住所文字列2
+            </code>
+            <p class="text-gray-600 mt-2">例:</p>
+            <code class="block bg-gray-200 p-2 rounded mt-2 text-sm overflow-x-auto whitespace-pre-wrap">
+?latlng1=(35.681236,139.767125)&address1=東京都千代田区丸の内１丁目&latlng2=(37.7749,-122.4194)&address2=San Francisco, CA, USA
+            </code>
+            <p class="text-gray-600 mt-2">
+                上記の例では、左側に東京駅周辺の地図と住所、右側にサンフランシスコ周辺の地図と住所が表示されます。
+            </p>
+            <p class="text-gray-600 mt-2">
+                緯度経度や住所パラメータが指定されていない場合は、デフォルトの地点が表示され、住所は「住所情報なし」となります。
+            </p>
+        </div>
+
+        <div id="error-message" class="mt-4 p-4 bg-red-100 text-red-700 rounded-lg shadow hidden">
+        </div>
+    </div>
+
+    <script>
+        // デフォルトの緯度経度 (左: 東京駅, 右: サンフランシスコ)
+        const defaultLatLng1 = [35.681236, 139.767125]; // 東京駅
+        const defaultLatLng2 = [37.7749, -122.4194];    // サンフランシスコ
+        const defaultAddress1 = "東京都千代田区丸の内１丁目";
+        const defaultAddress2 = "San Francisco, CA, USA";
+
+
+        // 地図の初期化と表示を行う関数
+        function initMap(mapId, latlng, titleId, titlePrefix) {
+            try {
+                const map = L.map(mapId).setView(latlng, 13); // ズームレベル13
+
+                // OpenStreetMapのタイルレイヤーを追加
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                }).addTo(map);
+
+                // マーカーを追加
+                L.marker(latlng).addTo(map)
+                    .bindPopup(`${titlePrefix}: (${latlng[0].toFixed(6)}, ${latlng[1].toFixed(6)})`)
+                    .openPopup();
+
+                // 地図のタイトルを更新 (緯度経度情報)
+                document.getElementById(titleId).textContent = `${titlePrefix}: (${latlng[0].toFixed(4)}, ${latlng[1].toFixed(4)})`;
+                return map;
+            } catch (error) {
+                console.error(`Error initializing map ${mapId}:`, error);
+                displayErrorMessage(`地図 ${mapId} の初期化中にエラーが発生しました: ${error.message}`);
+                const mapContainer = document.getElementById(mapId);
+                if (mapContainer) {
+                    mapContainer.innerHTML = `<p class="p-4 text-center text-red-500">地図の読み込みに失敗しました。</p>`;
+                }
+                return null;
+            }
+        }
+
+        // URLパラメータを解析する関数
+        function getParamsFromURL() {
+            const params = new URLSearchParams(window.location.search);
+            const latlngStr1 = params.get('latlng1');
+            const latlngStr2 = params.get('latlng2');
+            const address1Param = params.get('address1'); // address1 パラメータを取得
+            const address2Param = params.get('address2'); // address2 パラメータを取得
+
+            let latlng1 = defaultLatLng1;
+            let latlng2 = defaultLatLng2;
+            let address1 = address1Param || defaultAddress1; // パラメータがなければデフォルト
+            let address2 = address2Param || defaultAddress2; // パラメータがなければデフォルト
+            let parseError = false;
+
+            if (latlngStr1) {
+                try {
+                    const parsed1 = parseLatLngString(latlngStr1);
+                    if (parsed1) latlng1 = parsed1;
+                    else parseError = true;
+                } catch (e) {
+                    console.warn("Error parsing latlng1:", e);
+                    parseError = true;
+                }
+            }
+
+            if (latlngStr2) {
+                try {
+                    const parsed2 = parseLatLngString(latlngStr2);
+                    if (parsed2) latlng2 = parsed2;
+                    else parseError = true;
+                } catch (e) {
+                    console.warn("Error parsing latlng2:", e);
+                    parseError = true;
+                }
+            }
+
+            if (parseError) {
+                displayErrorMessage("URLの緯度経度パラメータの解析に失敗しました。(lat,lng) の形式で指定してください。デフォルトの地点を表示します。");
+                 // エラーがあっても住所はパラメータまたはデフォルトを使用
+                address1 = address1Param || defaultAddress1;
+                address2 = address2Param || defaultAddress2;
+            }
+
+
+            return { latlng1, latlng2, address1, address2 };
+        }
+
+        // "(lat,lng)" 形式の文字列を [lat, lng] の配列に変換する関数
+        function parseLatLngString(str) {
+            if (!str) return null;
+            const match = str.match(/^\s*\(\s*([+-]?\d*\.?\d+)\s*,\s*([+-]?\d*\.?\d+)\s*\)\s*$/);
+            if (match && match[1] && match[2]) {
+                const lat = parseFloat(match[1]);
+                const lng = parseFloat(match[2]);
+                if (isValidLatitude(lat) && isValidLongitude(lng)) {
+                    return [lat, lng];
+                }
+            }
+            console.warn(`Invalid latlng string format: ${str}`);
+            return null; // パース失敗
+        }
+
+        // 緯度が有効範囲内かチェック
+        function isValidLatitude(lat) {
+            return lat >= -90 && lat <= 90;
+        }
+
+        // 経度が有効範囲内かチェック
+        function isValidLongitude(lng) {
+            return lng >= -180 && lng <= 180;
+        }
+
+        // エラーメッセージを表示する関数
+        function displayErrorMessage(message) {
+            const errorDiv = document.getElementById('error-message');
+            if (errorDiv) {
+                errorDiv.textContent = message;
+                errorDiv.classList.remove('hidden');
+            }
+        }
+
+        // 住所を表示する関数
+        function displayAddress(addressId, addressText) {
+            const addressElement = document.getElementById(addressId);
+            if (addressElement) {
+                // テキストを安全に表示するためにtextContentを使用
+                addressElement.textContent = addressText ? decodeURIComponent(addressText) : '住所情報なし';
+            }
+        }
+
+        // ページ読み込み完了時の処理
+        window.onload = function() {
+            const { latlng1, latlng2, address1, address2 } = getParamsFromURL();
+
+            const map1 = initMap('map1', latlng1, 'map1-title', '地点1');
+            const map2 = initMap('map2', latlng2, 'map2-title', '地点2');
+
+            // 住所を表示
+            displayAddress('address1-display', address1);
+            displayAddress('address2-display', address2);
+
+
+            // ウィンドウリサイズ時に地図のサイズを再描画
+            window.addEventListener('resize', function() {
+                if (map1) map1.invalidateSize();
+                if (map2) map2.invalidateSize();
+            });
+        };
+    </script>
+</body>
+</html>
